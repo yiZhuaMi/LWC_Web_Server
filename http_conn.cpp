@@ -37,14 +37,14 @@ void addfd(int epollfd, int fd, bool one_shot)
     setnonblocking(fd);
 }
 
-// 删除fd上的注册事件
+// 删除fd上的所有注册事件
 void removefd(int epollfd, int fd)
 {
     epoll_ctl(epollfd, EPOLL_CTL_DEL, fd, 0);
     close(fd);
 }
 
-// 修改fd上的注册事件
+// 将事件重置为EPOLLONESHOT 解除对该fd的独占 确保下一次能被触发
 void modfd(int epollfd, int fd, int ev)
 {
     epoll_event event;
@@ -162,9 +162,9 @@ bool http_conn::read()
         bytes_read = recv(m_sockfd, m_read_buf + m_read_idx, READ_BUFFER_SIZE - m_read_idx, 0);
         if (bytes_read == -1) // 读失败
         {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) // 继续recv？？可以添加任务了？？？
+            if (errno == EAGAIN || errno == EWOULDBLOCK) // 缓冲区空 全部被读完了
             {
-                break;
+                break; //跳出循环 return true 添加任务 等待下一次可读事件 
             }
             return false; // 其他失败原因
         }
@@ -407,9 +407,10 @@ bool http_conn::write()
     int temp = 0;
     int bytes_have_send = 0;
     int bytes_to_send = m_write_idx; // 应用写缓冲区中待发送的字节数
+    // 由于没有数据要写
     if (bytes_to_send == 0)
     {
-        modfd(m_epollfd, m_sockfd, EPOLLIN); // m_sockfd读就绪
+        modfd(m_epollfd, m_sockfd, EPOLLIN); // 监听可读事件 解除对该fd的独占
         init();                              // 重置http_conn状态
         return true;                         // 保留http_conn连接
     }
@@ -420,12 +421,12 @@ bool http_conn::write()
         temp = writev(m_sockfd, m_iv, m_iv_count);
         if (temp <= -1) // 写失败
         {
-            // 如果TCP写缓冲区没有空间，则等待下一轮EPOLLOUT事件。
+            // 如果TCP写缓冲区没有空间，则等待下一轮EPOLLOUT事件（内核缓冲区有空间写）。
             // 虽然在此期间服务器无法立即接受到同一个客户端的下一个请求，但这可以保证连接的完整性。
-            if (errno == EAGAIN) // 非阻塞写 提示再次尝试
+            if (errno == EAGAIN) // 非阻塞写 写缓冲区满
             {
                 printf("写缓冲区满 请重试\n");
-                modfd(m_epollfd, m_sockfd, EPOLLOUT); // m_sockfd写就绪
+                modfd(m_epollfd, m_sockfd, EPOLLOUT); // 监听可写事件 然后等待下一次
                 return true;                          // 保留http_conn连接
             }
             printf("写出错\n");
@@ -437,18 +438,20 @@ bool http_conn::write()
 
         bytes_to_send -= temp;
         bytes_have_send += temp;
-        if (bytes_to_send <= bytes_have_send) // 已发送 超过 待发送？？？？？
+        // 一次只写一半到内核缓冲区，如何确保一次性发完一整个response？？？
+        if (bytes_to_send <= bytes_have_send)
         {
             unmap();      // 释放客户请求文件的内存
+            // 取消监听可写 否则由于写缓冲区可写（未满）则立即触发EPOLLOUT
             if (m_linger) // http请求要求保持连接
             {
                 init();                              // 重置http_conn状态
-                modfd(m_epollfd, m_sockfd, EPOLLIN); // m_sockfd读就绪
+                modfd(m_epollfd, m_sockfd, EPOLLIN); // 监听可读事件 取消监听可写 解除对该fd的独占
                 return true;                         // 保留http_conn连接
             }
             else
             {
-                modfd(m_epollfd, m_sockfd, EPOLLIN); // m_sockfd读就绪
+                modfd(m_epollfd, m_sockfd, EPOLLIN); // 监听可读事件 取消监听可写 解除对该fd的独占
                 return false;                        // 会关闭http_conn
             }
         }
@@ -590,7 +593,7 @@ void http_conn::process()
     HTTP_CODE read_ret = process_read();
     if (read_ret == NO_REQUEST) // 请求不完整 但可以继续读
     {
-        modfd(m_epollfd, m_sockfd, EPOLLIN); // m_sockfd读就绪
+        modfd(m_epollfd, m_sockfd, EPOLLIN); // 监听可读事件 解除对该fd的独占
         return;
     }
 
@@ -600,6 +603,6 @@ void http_conn::process()
     {
         close_conn(); // 从内核事件表移除m_sockfd 并用户数量-1
     }
-
-    modfd(m_epollfd, m_sockfd, EPOLLOUT); // m_sockfd写就绪
+    // 够造响应成功 等待内核缓冲区有空间可写
+    modfd(m_epollfd, m_sockfd, EPOLLOUT); // 监听可写事件 解除对该fd的独占
 }

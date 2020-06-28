@@ -103,9 +103,6 @@ int main(int argc, char *argv[])
     const char *ip = argv[1];
     int port = atoi(argv[2]);
 
-    // 忽略SIGPIPE信号
-    addsig(SIGPIPE, SIG_IGN);
-
     // 创建线程池
     threadpool<http_conn> *pool = NULL;
     try
@@ -183,6 +180,8 @@ int main(int argc, char *argv[])
     addsig(SIGALRM, sig_handler, false);
     // 终止进程，kill命令默认信号
     addsig(SIGTERM, sig_handler, false);
+    // SIG_IGN表示忽略SIGPIPE信号
+    addsig(SIGPIPE, SIG_IGN);
 
     // 预先为每个客户连接分配的定时器？？？
     client_data *users_timer = new client_data[MAX_FD];
@@ -321,13 +320,13 @@ int main(int argc, char *argv[])
                     }
                 }                
             }
-            else if (events[i].events & EPOLLIN) // 读就绪
+            else if (events[i].events & EPOLLIN) // 读就绪 内核缓冲区有数据可读
             {
                 printf("socket读就绪\n");
                 // 获取连接对应timer
                 util_timer *timer = users_timer[sockfd].timer;
                 // 根据读的结果决定是将任务添加到线程池还是关闭连接
-                if (users[sockfd].read()) // 从socket对应内核读缓冲区中非阻塞读
+                if (users[sockfd].read()) // 从socket对应内核读缓冲区中非阻塞读到对应http_conn的应用缓冲区
                 {
                     pool->append(users + sockfd); // 往线程池的请求队列中添加任务
                     // 读成功 定时器重置 并调整其在链表上的位置
@@ -350,7 +349,7 @@ int main(int argc, char *argv[])
                     }         
                 }
             }
-            else if (events[i].events & EPOLLOUT) // 写就绪
+            else if (events[i].events & EPOLLOUT) // 写就绪 内核缓冲区有空间可写
             {
                 printf("socket写就绪\n");
                 // 获取连接对应timer
