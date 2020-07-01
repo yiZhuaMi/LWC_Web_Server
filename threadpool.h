@@ -85,7 +85,7 @@ bool threadpool< T >::append( T* request )
     printf("请求队列size:%d max_size:%d\n",m_workqueue.size(),max_size);
 
     m_queuelocker.unlock();
-    m_queuestat.post();// 释放信号量
+    m_queuestat.post();// 释放信号量 让信号量的值加1
     return true;
 }
 
@@ -102,7 +102,7 @@ void threadpool< T >::run()
 {
     while ( ! m_stop )
     {
-        m_queuestat.wait();// 阻塞等待任务
+        m_queuestat.wait();// 阻塞等待任务 允许多个线程进入临界区 再争抢锁
         m_queuelocker.lock();// 线程竞争 给请求队列加锁
         if ( m_workqueue.empty() )
         {

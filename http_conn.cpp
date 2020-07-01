@@ -175,7 +175,7 @@ bool http_conn::read()
 
         m_read_idx += bytes_read; // 加上这次读取的字节数
     }
-    return true;
+    return true;// 直到把缓冲区读空 才返回
 }
 
 http_conn::HTTP_CODE http_conn::parse_request_line(char *text)
