@@ -328,7 +328,7 @@ int main(int argc, char *argv[])
                 // 根据读的结果决定是将任务添加到线程池还是关闭连接
                 if (users[sockfd].read()) // 从socket对应内核读缓冲区中非阻塞读到对应http_conn的应用缓冲区
                 {
-                    pool->append(users + sockfd); // 往线程池的请求队列中添加任务
+                    pool->append(users + sockfd); // 往线程池的请求队列中添加任务:http_conn对象
                     // 读成功 定时器重置 并调整其在链表上的位置
                     if (timer)
                     {

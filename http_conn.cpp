@@ -105,6 +105,7 @@ void http_conn::init()
     memset(m_real_file, '\0', FILENAME_LEN);
 }
 
+// 从状态机
 http_conn::LINE_STATUS http_conn::parse_line()
 {
     char temp;
@@ -127,7 +128,7 @@ http_conn::LINE_STATUS http_conn::parse_line()
                 m_read_buf[m_checked_idx++] = '\0'; // ???
                 return LINE_OK;
             }
-
+            // \r后面还有但不是\n
             return LINE_BAD;
         }
         else if (temp == '\n') // 是换行符 则有可能读到一个完整的行
@@ -155,7 +156,10 @@ bool http_conn::read()
     }
 
     int bytes_read = 0;
-    // ET模式？确保把socket读缓冲区中的所有数据读出
+    // TODO:添加LT读
+
+
+    // ET模式 确保把socket读缓冲区中的所有数据读出
     while (true)
     {
         // recv是否阻塞是根据socket是否阻塞，这里是非阻塞
@@ -180,7 +184,8 @@ bool http_conn::read()
 
 http_conn::HTTP_CODE http_conn::parse_request_line(char *text)
 {
-    // 在text中检索" \t"，返回第一个匹配的位置，未找到则返回NULL
+    // 在text中检索" \t"(空格)，返回第一个匹配的位置，未找到则返回NULL
+    // 在源字符串（s1）中找出最先含有搜索字符串（s2）中任一字符的位置并返回，若找不到则返回空指针。
     m_url = strpbrk(text, " \t");
     if (!m_url)
     {
@@ -201,7 +206,9 @@ http_conn::HTTP_CODE http_conn::parse_request_line(char *text)
     }
 
     // 检索字符串 str1 中第一个不在字符串 str2 中出现的字符下标
-    m_url += strspn(m_url, " \t"); // 跳过tab?
+    // 若strcspn()返回的数值为n, 则代表字符串str1开头连续有n个字符都不含字符串str2内的字符.
+    m_url += strspn(m_url, " \t"); // 跳过空格
+    // 在源字符串（s1）中找出最先含有搜索字符串（s2）中任一字符的位置并返回，若找不到则返回空指针。
     m_version = strpbrk(m_url, " \t");
     if (!m_version)
     {
@@ -234,19 +241,20 @@ http_conn::HTTP_CODE http_conn::parse_request_line(char *text)
 
 http_conn::HTTP_CODE http_conn::parse_headers(char *text)
 {
+    // 遇到空行，表示头部字段解析完毕
     if (text[0] == '\0')
     {
         if (m_method == HEAD)
         {
             return GET_REQUEST;
         }
-
+        // 请求有消息体，则还需读取CHECK_STATE_CONTENT字节的消息体，状态机转到CHECK_STATE_CONTENT状态
         if (m_content_length != 0)
         {
             m_check_state = CHECK_STATE_CONTENT;
             return NO_REQUEST;
         }
-
+        // 否则已经得到了完整的请求
         return GET_REQUEST;
     }
     else if (strncasecmp(text, "Connection:", 11) == 0)
@@ -290,7 +298,7 @@ http_conn::HTTP_CODE http_conn::parse_content(char *text)
     return NO_REQUEST;
 }
 
-// 分析http请求的入口函数
+// 主状态机 分析http请求的入口函数
 http_conn::HTTP_CODE http_conn::process_read()
 {
     // 记录当前行的读取状态
@@ -300,7 +308,8 @@ http_conn::HTTP_CODE http_conn::process_read()
     char *text = 0;
 
     // (正在分析消息主体 && 读到了完整行) || (正在分析请求行或者头部，那就使用从状态机读一行看是否完整)
-    while (((m_check_state == CHECK_STATE_CONTENT) && (line_status == LINE_OK)) || ((line_status = parse_line()) == LINE_OK))
+    while (((m_check_state == CHECK_STATE_CONTENT) && (line_status == LINE_OK)) 
+        || ((line_status = parse_line()) == LINE_OK))
     {
         text = get_line();            // 获取当前要读的行的起始位置
         m_start_line = m_checked_idx; // 记录下一行的起始位置
@@ -329,6 +338,7 @@ http_conn::HTTP_CODE http_conn::process_read()
             }
             else if (ret == GET_REQUEST) // 获得了完整的客户请求
             {
+                // content为空的情况
                 return do_request();
             }
             break;
@@ -426,7 +436,7 @@ bool http_conn::write()
             if (errno == EAGAIN) // 非阻塞写 写缓冲区满
             {
                 printf("写缓冲区满 请重试\n");
-                modfd(m_epollfd, m_sockfd, EPOLLOUT); // 监听可写事件 然后等待下一次
+                modfd(m_epollfd, m_sockfd, EPOLLOUT); // 解除对该fd的独占 然后等待下一次可写事件
                 return true;                          // 保留http_conn连接
             }
             printf("写出错\n");
@@ -436,10 +446,15 @@ bool http_conn::write()
         static int resp_times = 0;
         printf("写响应成功 %d 次\n", ++resp_times);
 
+        // 待发送的减去temp
         bytes_to_send -= temp;
+        // 已发送的加上temp
         bytes_have_send += temp;
+        
         // 一次只写一半到内核缓冲区，如何确保一次性发完一整个response？？？
         if (bytes_to_send <= bytes_have_send)
+        // TODO:测试
+        //if (bytes_to_send <= 0)
         {
             unmap();      // 释放客户请求文件的内存
             // 取消监听可写 否则由于写缓冲区可写（未满）则立即触发EPOLLOUT
