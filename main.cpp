@@ -16,23 +16,25 @@
 #include "lst_timer.h"
 
 // #define LT// 电平触发
-#define ET// 边沿触发
+// // #define ET// 边沿触发
 
-#ifdef ET
-    bool http_conn::m_et = true;
-#endif
+// #ifdef ET
+//     bool http_conn::m_et = true;
+// #endif
 
-#ifdef LT
-    bool http_conn::m_et = false;
-#endif
+// #ifdef LT
+//     bool http_conn::m_et = false;
+// #endif
 
 #define MAX_FD 65536
 #define MAX_EVENT_NUMBER 10000
 #define TIMESLOT 5
 
-extern int addfd(int epollfd, int fd, bool one_shot);
+extern int addfd(int epollfd, int fd, bool one_shot, int trig_mode);
 extern int removefd(int epollfd, int fd);
 extern int setnonblocking(int fd);
+
+bool http_conn::m_et = false;
 
 // 内核事件表描述符
 static int epollfd = 0;
@@ -103,6 +105,15 @@ int main(int argc, char *argv[])
     const char *ip = argv[1];
     int port = atoi(argv[2]);
 
+    // 监听socket的触发模式
+    int listenfd_mode = 0;// 0:LT 1:ET
+    // 连接socket的触发模式
+    int connfd_mode = 1;// 0:LT 1:ET
+    if (connfd_mode)
+    {
+        http_conn::m_et = true;
+    }
+   
     // 创建线程池
     threadpool<http_conn> *pool = NULL;
     try
@@ -163,7 +174,7 @@ int main(int argc, char *argv[])
     epollfd = epoll_create(5);
     assert(epollfd != -1);
     // 将文件描述符listenfd上的某个事件注册到epollfd指示的内核事件表 指定是否对fd启用ET模式
-    addfd(epollfd, listenfd, false);
+    addfd(epollfd, listenfd, false, listenfd_mode);
     // 所有socket上的事件都被注册到同一个epoll内核事件表中，所以设置为静态的
     http_conn::m_epollfd = epollfd;
 
@@ -172,8 +183,8 @@ int main(int argc, char *argv[])
     assert(ret != -1);
     // 写端非阻塞
     setnonblocking(pipefd[1]);
-    // 注册管道读端的可读事件
-    addfd(epollfd, pipefd[0], false);
+    // 注册管道读端的可读事件 默认LT
+    addfd(epollfd, pipefd[0], false, 0);
 
     //设置信号处理函数
     // 闹钟超时引起
@@ -210,53 +221,23 @@ int main(int argc, char *argv[])
                 printf("incoming socket\n");
                 struct sockaddr_in client_address;
                 socklen_t client_addrlength = sizeof(client_address);
-#ifdef LT
-                // 接受连接，获取被接受的远程socket地址
-                int connfd = accept(listenfd, (struct sockaddr *)&client_address, &client_addrlength);
-                if (connfd < 0)
-                {
-                    printf("errno is: %d\n", errno);
-                    continue;
-                }
-                if (http_conn::m_user_count >= MAX_FD)
-                {
-                    show_error(connfd, "Internal server busy");
-                    continue;
-                }
-                // 用socket值来做http_conn对象的索引 并初始化http_conn
-                users[connfd].init(connfd, client_address);
-                // 初始化client_data
-                users_timer[connfd].address = client_address;
-                users_timer[connfd].sockfd = connfd;
-                // 该连接的定时器 升序定时器链表的节点
-                util_timer *timer = new util_timer;
-                timer->user_data = &users_timer[connfd];
-                timer->cb_func = cb_func;
-                time_t cur = time(NULL);
-                timer->expire = cur + 3 * TIMESLOT;
-                users_timer[connfd].timer = timer;
-                // 将timer插入到升序定时器链表
-                timer_lst.add_timer(timer);
-#endif
-
-#ifdef ET
-                // 边沿触发 必须立即全部读完 后续epoll_wait不再通知
-                while (1)
+                
+                if (listenfd_mode == 0)
                 {
                     // 接受连接，获取被接受的远程socket地址
                     int connfd = accept(listenfd, (struct sockaddr *)&client_address, &client_addrlength);
                     if (connfd < 0)
                     {
                         printf("errno is: %d\n", errno);
-                        break;//!!!!!!!!!!!!!!!!!!
+                        continue;
                     }
                     if (http_conn::m_user_count >= MAX_FD)
                     {
                         show_error(connfd, "Internal server busy");
-                        break;//!!!!!!!!!!!!!!!!!!!
+                        continue;
                     }
-                    // 用socket值来做http_conn对象的索引 并初始化http_conn
-                    users[connfd].init(connfd, client_address);
+                    // 用socket值来做http_conn对象的索引 并初始化http_conn,添加connfd到内核事件表
+                    users[connfd].init(connfd, client_address, connfd_mode);
                     // 初始化client_data
                     users_timer[connfd].address = client_address;
                     users_timer[connfd].sockfd = connfd;
@@ -270,8 +251,40 @@ int main(int argc, char *argv[])
                     // 将timer插入到升序定时器链表
                     timer_lst.add_timer(timer);
                 }
-                continue;//!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-#endif
+                else
+                {
+                    // 边沿触发 必须立即全部读完 后续epoll_wait不再通知
+                    while (1)
+                    {
+                        // 接受连接，获取被接受的远程socket地址
+                        int connfd = accept(listenfd, (struct sockaddr *)&client_address, &client_addrlength);
+                        if (connfd < 0)
+                        {
+                            printf("errno is: %d\n", errno);
+                            break;//!!!!!!!!!!!!!!!!!!
+                        }
+                        if (http_conn::m_user_count >= MAX_FD)
+                        {
+                            show_error(connfd, "Internal server busy");
+                            break;//!!!!!!!!!!!!!!!!!!!
+                        }
+                        // 用socket值来做http_conn对象的索引 并初始化http_conn
+                        users[connfd].init(connfd, client_address, connfd_mode);
+                        // 初始化client_data
+                        users_timer[connfd].address = client_address;
+                        users_timer[connfd].sockfd = connfd;
+                        // 该连接的定时器 升序定时器链表的节点
+                        util_timer *timer = new util_timer;
+                        timer->user_data = &users_timer[connfd];
+                        timer->cb_func = cb_func;
+                        time_t cur = time(NULL);
+                        timer->expire = cur + 3 * TIMESLOT;
+                        users_timer[connfd].timer = timer;
+                        // 将timer插入到升序定时器链表
+                        timer_lst.add_timer(timer);
+                    }
+                    continue;//!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                }
             }
             else if (events[i].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) // 连接socket的事件:挂起、被对方关闭、错误
             {

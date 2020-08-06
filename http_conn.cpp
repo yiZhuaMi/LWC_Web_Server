@@ -20,12 +20,13 @@ int setnonblocking(int fd)
 }
 
 // 往内核事件表注册fd上的事件
-void addfd(int epollfd, int fd, bool one_shot)
+void addfd(int epollfd, int fd, bool one_shot, int trig_mode)
 {
     epoll_event event;
     event.data.fd = fd;
     event.events = EPOLLIN | EPOLLRDHUP;
-    if (http_conn::m_et)
+    // 外部传入,可能是设置listenfd的mode,也可能是connfd的mode
+    if (trig_mode == 1)
     {
         event.events |= EPOLLET;
     }
@@ -50,6 +51,7 @@ void modfd(int epollfd, int fd, int ev)
     epoll_event event;
     event.data.fd = fd;
     event.events = ev | EPOLLONESHOT | EPOLLRDHUP;
+    // 只有connfd会调用modfd,直接读m_et就好,无需传参
     if (http_conn::m_et)
     {
         event.events |= EPOLLET;
@@ -71,7 +73,7 @@ void http_conn::close_conn(bool real_close)
     }
 }
 
-void http_conn::init(int sockfd, const sockaddr_in &addr)
+void http_conn::init(int sockfd, const sockaddr_in &addr, int trig_mode)
 {
     m_sockfd = sockfd;
     m_address = addr;
@@ -80,7 +82,7 @@ void http_conn::init(int sockfd, const sockaddr_in &addr)
     getsockopt(m_sockfd, SOL_SOCKET, SO_ERROR, &error, &len);
     int reuse = 1;
     setsockopt(m_sockfd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
-    addfd(m_epollfd, sockfd, true);
+    addfd(m_epollfd, sockfd, true, trig_mode);
     m_user_count++;
 
     init();
@@ -156,28 +158,39 @@ bool http_conn::read()
     }
 
     int bytes_read = 0;
-    // TODO:添加LT读
 
-
-    // ET模式 确保把socket读缓冲区中的所有数据读出
-    while (true)
+    if (0)
     {
-        // recv是否阻塞是根据socket是否阻塞，这里是非阻塞
-        bytes_read = recv(m_sockfd, m_read_buf + m_read_idx, READ_BUFFER_SIZE - m_read_idx, 0);
-        if (bytes_read == -1) // 读失败
-        {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) // 缓冲区空 全部被读完了
-            {
-                break; //跳出循环 return true 添加任务 等待下一次可读事件 
-            }
-            return false; // 其他失败原因
-        }
-        else if (bytes_read == 0) // 连接被对方关闭
+        // LT读
+        printf("LT读\n");
+        bytes_read = recv(m_sockfd,m_read_buf+m_read_idx,READ_BUFFER_SIZE-m_read_idx,0);
+        m_read_idx += bytes_read;
+        if (bytes_read <= 0)
         {
             return false;
         }
-
-        m_read_idx += bytes_read; // 加上这次读取的字节数
+    }
+    else
+    {
+        // ET写 确保把socket读缓冲区中的所有数据读出
+        while (true)
+        {
+            // recv是否阻塞是根据socket是否阻塞，这里是非阻塞
+            bytes_read = recv(m_sockfd, m_read_buf + m_read_idx, READ_BUFFER_SIZE - m_read_idx, 0);
+            if (bytes_read == -1) // 读失败
+            {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) // 缓冲区空 全部被读完了
+                {
+                    break; //跳出循环 return true 添加任务 等待下一次可读事件 
+                }
+                return false; // 其他失败原因
+            }
+            else if (bytes_read == 0) // 连接被对方关闭
+            {
+                return false;
+            }
+            m_read_idx += bytes_read; // 加上这次读取的字节数
+        }
     }
     return true;// 直到把缓冲区读空 才返回
 }
@@ -452,9 +465,9 @@ bool http_conn::write()
         bytes_have_send += temp;
         
         // 一次只写一半到内核缓冲区，如何确保一次性发完一整个response？？？
-        if (bytes_to_send <= bytes_have_send)
+        // if (bytes_to_send <= bytes_have_send)
         // TODO:测试
-        //if (bytes_to_send <= 0)
+        if (bytes_to_send <= 0)
         {
             unmap();      // 释放客户请求文件的内存
             // 取消监听可写 否则由于写缓冲区可写（未满）则立即触发EPOLLOUT

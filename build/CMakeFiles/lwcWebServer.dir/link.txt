@@ -1,0 +1,1 @@
+/usr/bin/c++   -pthread  -rdynamic CMakeFiles/lwcWebServer.dir/main.cpp.o CMakeFiles/lwcWebServer.dir/http_conn.cpp.o  -o lwcWebServer 
