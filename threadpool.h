@@ -23,6 +23,7 @@ private:
     int m_thread_number;        // 线程池中的线程数
     int m_max_requests;         // 请求队列中允许的最大的等待请求数
     pthread_t *m_threads;       // 线程标识符的数组，其大小为m_thread_number
+   
     std::list<T *> m_workqueue; // 请求队列
     locker m_queuelocker;       // 保护请求队列的互斥锁
     sem m_queuestat;            // 是否有任务需要处理

@@ -194,7 +194,7 @@ int main(int argc, char *argv[])
     // SIG_IGN表示忽略SIGPIPE信号
     addsig(SIGPIPE, SIG_IGN);
 
-    // 预先为每个客户连接分配的定时器？？？
+    // 预先为每个客户连接分配的,包含connfd,socket远程地址,指向http_conn对应的定时器节点的指针等
     client_data *users_timer = new client_data[MAX_FD];
 
     bool stop_server = false;

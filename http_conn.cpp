@@ -159,13 +159,13 @@ bool http_conn::read()
 
     int bytes_read = 0;
 
-    if (0)
+    if (http_conn::m_et == 0)
     {
         // LT读
         printf("LT读\n");
         bytes_read = recv(m_sockfd,m_read_buf+m_read_idx,READ_BUFFER_SIZE-m_read_idx,0);
         m_read_idx += bytes_read;
-        if (bytes_read <= 0)
+        if (bytes_read <= 0)// 0:被关闭 -1:出错
         {
             return false;
         }
@@ -587,6 +587,7 @@ bool http_conn::process_write(HTTP_CODE ret)
         if (m_file_stat.st_size != 0)
         {
             add_headers(m_file_stat.st_size);
+            // 整个响应分为两个部分:写缓冲区中的statue_line,headers和被映射到内存中的目标文件
             m_iv[0].iov_base = m_write_buf; // 写缓冲区
             m_iv[0].iov_len = m_write_idx;
             m_iv[1].iov_base = m_file_address; // 请求的目标文件

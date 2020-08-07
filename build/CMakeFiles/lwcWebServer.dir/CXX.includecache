@@ -6,6 +6,10 @@
 
 #IncludeRegexTransform: 
 
+/home/yizhua/Documents/MyHTTPServer/LWC_Web_Server/http_conn.cpp
+http_conn.h
+/home/yizhua/Documents/MyHTTPServer/LWC_Web_Server/http_conn.h
+
 /home/yizhua/Documents/MyHTTPServer/LWC_Web_Server/http_conn.h
 unistd.h
 -

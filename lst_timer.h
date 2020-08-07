@@ -57,7 +57,7 @@ public:
             head = tail = timer;
             return;
         }
-        if (timer->expire < head->expire)
+        if (timer->expire < head->expire)// 马上超时,插到头部
         {
             timer->next = head;
             head->prev = timer;
@@ -74,21 +74,28 @@ public:
             return;
         }
         util_timer *tmp = timer->next;
+        // 加时以后仍然小于后一个定时器
         if (!tmp || (timer->expire < tmp->expire))
         {
             return;
         }
+        // 真的需要调整
+        // 要移动的是头结点
         if (timer == head)
         {
+            // 改变头结点,跳过自己
             head = head->next;
             head->prev = NULL;
             timer->next = NULL;
+            // 从下一个节点往后找
             add_timer(timer, head);
         }
         else
         {
+            // 连接前后连个节点,跳过自己
             timer->prev->next = timer->next;
             timer->next->prev = timer->prev;
+            // 从下一个节点往后找
             add_timer(timer, timer->next);
         }
     }
@@ -162,21 +169,24 @@ private:
     void add_timer(util_timer *timer, util_timer *lst_head)
     {
         util_timer *prev = lst_head;
-        util_timer *tmp = prev->next;
-        while (tmp)
+        util_timer *cur = prev->next;
+        while (cur)
         {
-            if (timer->expire < tmp->expire)
+            // 找到要插入的位置
+            if (timer->expire < cur->expire)
             {
                 prev->next = timer;
-                timer->next = tmp;
-                tmp->prev = timer;
+                timer->next = cur;
+                cur->prev = timer;
                 timer->prev = prev;
                 break;
             }
-            prev = tmp;
-            tmp = tmp->next;
+            // 都往后走
+            prev = cur;
+            cur = cur->next;
         }
-        if (!tmp)
+        // 插到尾部
+        if (!cur)
         {
             prev->next = timer;
             timer->prev = prev;
